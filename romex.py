@@ -177,7 +177,7 @@ class RomanSequence:
 
     def __init__(self, sequence: Sequence[HasRomanValue], strict: bool = False):
         self.sequence = sequence
-        self.strict = False
+        self.strict = strict
 
     def __add__(self, other: RomanSequence) -> RomanSequence:
         if not isinstance(other, RomanSequence):
