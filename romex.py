@@ -126,12 +126,14 @@ class Vinculum:
     inner: RomanSequence
     kind: VinculumKind
     multiplicity: int
+    strict: bool
 
     def __init__(
         self,
         inner: HasRomanValue | str,
         kind: VinculumKind = VinculumKind.THOUSAND,
         multiplicity: int = 1,
+        strict: bool = False
     ):
         assert multiplicity >= 1
         sequence = mk_roman_sequence(inner)
@@ -140,6 +142,7 @@ class Vinculum:
         self.inner = sequence
         self.kind = kind
         self.multiplicity = multiplicity
+        self.strict = strict
 
     def roman_value(self) -> int | Fraction:
         return (
@@ -347,11 +350,11 @@ def parse_vinculum_ten_group(
     except IndexError:
         return None
 
-    result = parse_roman_sequence(source, begin + 1)
+    result = parse_roman_component(source, begin + 1)
     if result is None:
         return None
 
-    sequence, begin = result
+    component, begin = result
 
     try:
         if source[begin] != "|":
@@ -359,7 +362,10 @@ def parse_vinculum_ten_group(
     except IndexError:
         return None
 
-    return (Vinculum(sequence, VinculumKind.TEN), begin + 1)
+    if isinstance(component, Vinculum) and component.kind is VinculumKind.THOUSAND:
+        return (Vinculum(component.inner, VinculumKind.HUNDRED_THOUSAND), begin + 1)
+
+    return (Vinculum(component, VinculumKind.TEN), begin + 1)
 
 
 def parse_roman_sequence(
@@ -414,11 +420,6 @@ def parse_roman_component(
     source: str, begin: int, sequence: bool = True, strict: bool = False
 ) -> tuple[HasRomanValue, int] | None:
     result: tuple[HasRomanValue, int] | None
-    if sequence:
-        result = parse_roman_sequence(source, begin, strict)
-        if result is not None:
-            return result
-
     result = parse_vinculum_thousand_group(source, begin)
     if result is not None:
         return result
@@ -430,6 +431,11 @@ def parse_roman_component(
     result = parse_apostrophus(source, begin)
     if result is not None:
         return result
+
+    if sequence:
+        result = parse_roman_sequence(source, begin, strict)
+        if result is not None:
+            return result
 
     result = parse_single_symbol(source, begin)
     if result is not None:
