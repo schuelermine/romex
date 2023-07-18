@@ -208,10 +208,11 @@ class RomanSequence:
                 ):
                     raise ValueError("Malformed roman numeral (strict=True)")
                 total -= value
+                last_value -= value
             else:
                 total += value
+                last_value = value
 
-            last_value = value
 
         return total
 
