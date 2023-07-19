@@ -204,14 +204,11 @@ class RomanSequence:
                 summands.append(value - summands.pop())
             else:
                 summands.append(value)
-        
+
         return sum(summands)
-
-
 
     def __str__(self) -> str:
         return "".join(str(item) for item in self.sequence)
-
 
 
 I, V, X, L, C, D, M = BasicRomanSigil
