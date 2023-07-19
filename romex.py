@@ -195,110 +195,23 @@ class RomanSequence:
         return flattened
 
     def roman_value(self) -> int | Fraction:
-        result = evaluate_monotonic_sequence(self.sequence, len(self.sequence))
-        if result is None or result[1] > 0:
-            raise ValueError("Malformed roman numeral" + "(strict=True)" if self.strict else "")
+        if self.sequence == []:
+            raise ValueError("Empty numeral")
+        summands: list[int | Fraction] = [self.sequence[0].roman_value()]
+        for item in self.sequence[1:]:
+            value = item.roman_value()
+            if value > summands[-1]:
+                summands.append(value - summands.pop())
+            else:
+                summands.append(value)
         
-        return result[0]
+        return sum(summands)
+
 
 
     def __str__(self) -> str:
         return "".join(str(item) for item in self.sequence)
 
-
-class MonotonicSequenceKind(Enum):
-    INCREASING = auto()
-    DECREASING = auto()
-
-
-INCREASING, DECREASING = MonotonicSequenceKind
-
-
-def evaluate_monotonic_sequence(
-    sequence: Sequence[HasRomanValue],
-    end: int,
-    excluded_kind: MonotonicSequenceKind | None = None,
-) -> tuple[int | Fraction, int] | None:
-    if excluded_kind != INCREASING:
-        result = evaluate_increasing_sequence(sequence, end)
-        if result is not None:
-            return result
-    
-    if excluded_kind != DECREASING:
-        result = evaluate_decreasing_sequence(sequence, end)
-        if result is not None:
-            return result
-        
-    result = evaluate_single_symbol(sequence, end)
-    if result is not None:
-        return result
-    
-    return None
-    
-
-def evaluate_single_symbol(sequence: Sequence[HasRomanValue], end: int) -> tuple[int | Fraction, int] | None:
-    if end <= 0:
-        return None
-    try:
-        return (sequence[end - 1].roman_value(), end - 1)
-    except KeyError:
-        return None
-
-
-def evaluate_decreasing_sequence(sequence: Sequence[HasRomanValue], end: int) -> tuple[int | Fraction, int] | None:
-    result = evaluate_monotonic_sequence(sequence, end, DECREASING)
-    if result is None:
-        return None
-
-    total, end = result
-    result = evaluate_monotonic_sequence(sequence, end, DECREASING)
-    if result is None:
-        return None
-    
-    last_value, end = result
-    total -= last_value
-    while True:
-        result = evaluate_monotonic_sequence(sequence, end, DECREASING)
-        if result is None:
-            break
-
-        value, end = result
-        if last_value > value:
-            break
-
-        total -= value
-        last_value = value
-    
-    return (total, end)
-
-
-def evaluate_increasing_sequence(
-    sequence: Sequence[HasRomanValue], end: int
-) -> tuple[int | Fraction, int] | None:
-    result = evaluate_monotonic_sequence(sequence, end, INCREASING)
-    if result is None:
-        return None
-
-    total, end = result
-    result = evaluate_monotonic_sequence(sequence, end, INCREASING)
-    if result is None:
-        return None
-    
-    last_value, end = result
-    total += last_value
-    while True:
-        result = evaluate_monotonic_sequence(sequence, end, INCREASING)
-        if result is None:
-            break
-
-        value, end = result
-        if last_value < value:
-            break
-
-        total += value
-        last_value = value
-
-    return (total, end)
 
 
 I, V, X, L, C, D, M = BasicRomanSigil
