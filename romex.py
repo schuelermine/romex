@@ -118,7 +118,7 @@ class ApostrophusRomanSigil(Enum):
 
 class VinculumKind(Enum):
     THOUSAND = 1000
-    HUNDRED_THOUSAND = 100000
+    HUNDRED_THOUSAND = 1000000
 
 
 class Vinculum:
