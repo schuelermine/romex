@@ -40,7 +40,7 @@ __all__ = (
 
 
 class HasRomanValue(Protocol):
-    def roman_value(self) -> int | Fraction:
+    def roman_value(self, strict: bool = True, /) -> int | Fraction:
         ...
 
 
@@ -53,7 +53,7 @@ class BasicRomanSigil(Enum):
     D = 500
     M = 1000
 
-    def roman_value(self) -> int:
+    def roman_value(self, strict: bool = False, /) -> int:
         return self.value
 
     def __str__(self) -> str:
@@ -74,7 +74,7 @@ class FractionalRomanSigil(Enum):
     SICILICUS = Fraction(1, 48)
     SEMUNCIA = Fraction(1, 24)
 
-    def roman_value(self) -> Fraction:
+    def roman_value(self, _strict: bool = False, /) -> Fraction:
         return self.value
 
     def __str__(self) -> str:
@@ -102,7 +102,7 @@ class ApostrophusRomanSigil(Enum):
     FIFTY_THOUSAND = 50000
     HUNDRED_THOUSAND = 100000
 
-    def roman_value(self) -> int:
+    def roman_value(self, _strict: bool = False, /) -> int:
         return self.value
 
     def __str__(self) -> str:
@@ -143,9 +143,9 @@ class Vinculum:
         self.multiplicity = multiplicity
         self.strict = strict
 
-    def roman_value(self) -> int | Fraction:
+    def roman_value(self, strict: bool = False, /) -> int | Fraction:
         return (
-            cast(int, self.kind.value**self.multiplicity) * self.inner.roman_value()
+            cast(int, self.kind.value**self.multiplicity) * self.inner.roman_value(strict)
         )
 
     def __str__(self) -> str:
@@ -172,21 +172,19 @@ class Vinculum:
 @final
 class RomanSequence:
     sequence: Sequence[HasRomanValue]
-    strict: bool
 
-    def __init__(self, sequence: Sequence[HasRomanValue], strict: bool = False):
+    def __init__(self, sequence: Sequence[HasRomanValue]):
         self.sequence = sequence
-        self.strict = strict
 
     def __add__(self, other: RomanSequence) -> RomanSequence:
         if not isinstance(other, RomanSequence):
             return NotImplemented
         return RomanSequence(
-            [*self.sequence, *other.sequence], strict=self.strict or other.strict
+            [*self.sequence, *other.sequence]
         )
 
     def flatten(self) -> RomanSequence:
-        flattened = RomanSequence([], self.strict)
+        flattened = RomanSequence([])
         for item in self.sequence:
             if isinstance(item, RomanSequence):
                 flattened += item
@@ -194,14 +192,22 @@ class RomanSequence:
                 flattened += RomanSequence([item])
         return flattened
 
-    def roman_value(self) -> int | Fraction:
+    def roman_value(self, strict: bool = False, /) -> int | Fraction:
         if self.sequence == []:
             raise ValueError("Empty numeral")
         summands: list[int | Fraction] = [self.sequence[0].roman_value()]
         for item in self.sequence[1:]:
             value = item.roman_value()
             if value > summands[-1]:
-                summands.append(value - summands.pop())
+                last_summand = summands.pop()
+                if strict and not (
+                    (last_summand == 1 and value in [5, 10])
+                    or (last_summand == 10 and value in [50, 100])
+                    or (last_summand == 100 and value in [500, 1000])
+                ):
+                    raise ValueError("Malformed numeral (strict=True)")
+
+                summands.append(value - last_summand)
             else:
                 summands.append(value)
 
@@ -350,15 +356,15 @@ def parse_vinculum_hundred_thousand_group(
     except IndexError:
         return None
 
-    return (Vinculum(component, VinculumKind.HUNDRED_THOUSAND), begin + 1)
+    return (Vinculum(component.inner, VinculumKind.HUNDRED_THOUSAND), begin + 1)
 
 
 def parse_roman_sequence(
-    source: str, begin: int, strict: bool = False
+    source: str, begin: int
 ) -> tuple[RomanSequence, int] | None:
     sequence: list[HasRomanValue] = []
     while True:
-        result = parse_roman_component(source, begin, False, strict)
+        result = parse_roman_component(source, begin, False)
         if result is None:
             break
 
@@ -368,7 +374,7 @@ def parse_roman_sequence(
     if len(sequence) == 0:
         return None
 
-    return (RomanSequence(sequence, strict), begin)
+    return (RomanSequence(sequence), begin)
 
 
 APOSTROPHUS = re.compile(
@@ -402,7 +408,7 @@ def parse_apostrophus(
 
 
 def parse_roman_component(
-    source: str, begin: int, sequence: bool = True, strict: bool = False
+    source: str, begin: int, sequence: bool = True
 ) -> tuple[HasRomanValue, int] | None:
     result: tuple[HasRomanValue, int] | None
     result = parse_vinculum_thousand_group(source, begin)
@@ -418,7 +424,7 @@ def parse_roman_component(
         return result
 
     if sequence:
-        result = parse_roman_sequence(source, begin, strict)
+        result = parse_roman_sequence(source, begin)
         if result is not None:
             return result
 
@@ -430,7 +436,7 @@ def parse_roman_component(
 
 
 def mk_roman_sequence(
-    *args: HasRomanValue | str, strict: bool = False
+    *args: HasRomanValue | str
 ) -> RomanSequence:
     sequence: list[HasRomanValue] = []
     if len(args) == 0:
@@ -438,7 +444,7 @@ def mk_roman_sequence(
 
     for arg in args:
         if isinstance(arg, str):
-            result = parse_roman_sequence("".join(arg.split()).upper(), 0, strict)
+            result = parse_roman_sequence("".join(arg.split()).upper(), 0)
             if result is None:
                 raise ValueError("Cannot parse string as roman numeral")
 
@@ -446,9 +452,9 @@ def mk_roman_sequence(
         else:
             sequence.append(arg)
 
-    return RomanSequence(sequence, strict).flatten()
+    return RomanSequence(sequence).flatten()
 
 
 def get_roman_value(*args: HasRomanValue | str, strict: bool = False) -> int | Fraction:
-    sequence = mk_roman_sequence(*args, strict=strict)
-    return sequence.roman_value()
+    sequence = mk_roman_sequence(*args)
+    return sequence.roman_value(strict)
