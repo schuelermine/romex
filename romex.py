@@ -1,5 +1,5 @@
 from __future__ import annotations
-from enum import Enum
+from enum import Enum, auto
 from typing import Protocol, cast, final
 from fractions import Fraction
 from collections.abc import Sequence, Mapping
@@ -117,7 +117,6 @@ class ApostrophusRomanSigil(Enum):
 
 
 class VinculumKind(Enum):
-    TEN = 10
     THOUSAND = 1000
     HUNDRED_THOUSAND = 100000
 
@@ -133,7 +132,7 @@ class Vinculum:
         inner: HasRomanValue | str,
         kind: VinculumKind = VinculumKind.THOUSAND,
         multiplicity: int = 1,
-        strict: bool = False
+        strict: bool = False,
     ):
         assert multiplicity >= 1
         sequence = mk_roman_sequence(inner)
@@ -150,9 +149,6 @@ class Vinculum:
         )
 
     def __str__(self) -> str:
-        if self.kind == VinculumKind.TEN:
-            return f"|{self.inner}|"
-
         if self.kind == VinculumKind.THOUSAND:
             return "".join(
                 map(
@@ -199,28 +195,110 @@ class RomanSequence:
         return flattened
 
     def roman_value(self) -> int | Fraction:
-        total: int | Fraction = 0
-        last_value: int | Fraction | None = None
-        for item in reversed(self.sequence):
-            value = item.roman_value()
-            if last_value is not None and last_value > value:
-                if self.strict and not (
-                    (value == 1 and last_value in [5, 10])
-                    or (value == 10 and last_value in [50, 100])
-                    or (value == 100 and last_value in [500, 1000])
-                ):
-                    raise ValueError("Malformed roman numeral (strict=True)")
-                total -= value
-                last_value -= value
-            else:
-                total += value
-                last_value = value
+        result = evaluate_monotonic_sequence(self.sequence, len(self.sequence))
+        if result is None or result[1] > 0:
+            raise ValueError("Malformed roman numeral" + "(strict=True)" if self.strict else "")
+        
+        return result[0]
 
-
-        return total
 
     def __str__(self) -> str:
         return "".join(str(item) for item in self.sequence)
+
+
+class MonotonicSequenceKind(Enum):
+    INCREASING = auto()
+    DECREASING = auto()
+
+
+INCREASING, DECREASING = MonotonicSequenceKind
+
+
+def evaluate_monotonic_sequence(
+    sequence: Sequence[HasRomanValue],
+    end: int,
+    excluded_kind: MonotonicSequenceKind | None = None,
+) -> tuple[int | Fraction, int] | None:
+    if excluded_kind != INCREASING:
+        result = evaluate_increasing_sequence(sequence, end)
+        if result is not None:
+            return result
+    
+    if excluded_kind != DECREASING:
+        result = evaluate_decreasing_sequence(sequence, end)
+        if result is not None:
+            return result
+        
+    result = evaluate_single_symbol(sequence, end)
+    if result is not None:
+        return result
+    
+    return None
+    
+
+def evaluate_single_symbol(sequence: Sequence[HasRomanValue], end: int) -> tuple[int | Fraction, int] | None:
+    if end <= 0:
+        return None
+    try:
+        return (sequence[end - 1].roman_value(), end - 1)
+    except KeyError:
+        return None
+
+
+def evaluate_decreasing_sequence(sequence: Sequence[HasRomanValue], end: int) -> tuple[int | Fraction, int] | None:
+    result = evaluate_monotonic_sequence(sequence, end, DECREASING)
+    if result is None:
+        return None
+
+    total, end = result
+    result = evaluate_monotonic_sequence(sequence, end, DECREASING)
+    if result is None:
+        return None
+    
+    last_value, end = result
+    total -= last_value
+    while True:
+        result = evaluate_monotonic_sequence(sequence, end, DECREASING)
+        if result is None:
+            break
+
+        value, end = result
+        if last_value > value:
+            break
+
+        total -= value
+        last_value = value
+    
+    return (total, end)
+
+
+def evaluate_increasing_sequence(
+    sequence: Sequence[HasRomanValue], end: int
+) -> tuple[int | Fraction, int] | None:
+    result = evaluate_monotonic_sequence(sequence, end, INCREASING)
+    if result is None:
+        return None
+
+    total, end = result
+    result = evaluate_monotonic_sequence(sequence, end, INCREASING)
+    if result is None:
+        return None
+    
+    last_value, end = result
+    total += last_value
+    while True:
+        result = evaluate_monotonic_sequence(sequence, end, INCREASING)
+        if result is None:
+            break
+
+        value, end = result
+        if last_value < value:
+            break
+
+        total += value
+        last_value = value
+
+    return (total, end)
 
 
 I, V, X, L, C, D, M = BasicRomanSigil
@@ -341,7 +419,7 @@ def parse_vinculum_thousand_group(
     return (Vinculum(sequence, VinculumKind.THOUSAND, count), begin)
 
 
-def parse_vinculum_ten_group(
+def parse_vinculum_hundred_thousand_group(
     source: str, begin: int
 ) -> tuple[Vinculum, int] | None:
     try:
@@ -350,7 +428,7 @@ def parse_vinculum_ten_group(
     except IndexError:
         return None
 
-    result = parse_roman_component(source, begin + 1)
+    result = parse_vinculum_thousand_group(source, begin + 1)
     if result is None:
         return None
 
@@ -362,10 +440,7 @@ def parse_vinculum_ten_group(
     except IndexError:
         return None
 
-    if isinstance(component, Vinculum) and component.kind is VinculumKind.THOUSAND:
-        return (Vinculum(component.inner, VinculumKind.HUNDRED_THOUSAND), begin + 1)
-
-    return (Vinculum(component, VinculumKind.TEN), begin + 1)
+    return (Vinculum(component, VinculumKind.HUNDRED_THOUSAND), begin + 1)
 
 
 def parse_roman_sequence(
@@ -424,7 +499,7 @@ def parse_roman_component(
     if result is not None:
         return result
 
-    result = parse_vinculum_ten_group(source, begin)
+    result = parse_vinculum_hundred_thousand_group(source, begin)
     if result is not None:
         return result
 
@@ -448,6 +523,9 @@ def mk_roman_sequence(
     *args: HasRomanValue | str, strict: bool = False
 ) -> RomanSequence:
     sequence: list[HasRomanValue] = []
+    if len(args) == 0:
+        raise ValueError("Empty input roman numeral")
+
     for arg in args:
         if isinstance(arg, str):
             result = parse_roman_sequence("".join(arg.split()).upper(), 0, strict)
