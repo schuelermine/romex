@@ -2,11 +2,16 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Protocol, cast, final
 from fractions import Fraction
-from collections.abc import Sequence, Mapping
+from collections.abc import Sequence, Mapping, Iterable
+from dataclasses import dataclass, field
+from itertools import groupby
 import re
 
 
 __all__ = (
+    "Options",
+    "NESTED_SUBTRACTION_STACK_MODE",
+    "SINGLE_VALUE_SUBTRACTION_MODE",
     "I",
     "V",
     "X",
@@ -39,8 +44,30 @@ __all__ = (
 )
 
 
+class SequenceEvaluationMode(Enum):
+    NESTED_SUBTRACTION_STACK_MODE = auto()
+    SINGLE_VALUE_SUBTRACTION_MODE = auto()
+
+
+NESTED_SUBTRACTION_STACK_MODE, SINGLE_VALUE_SUBTRACTION_MODE = SequenceEvaluationMode
+
+
+@dataclass(frozen=True)
+class Options:
+    """
+    Represents the mode for evaluating sequences
+    """
+
+    mode: SequenceEvaluationMode = field(default=NESTED_SUBTRACTION_STACK_MODE)
+    strict: bool = field(kw_only=True, default=False)
+    grouped: bool = field(kw_only=True, default=True)
+
+
+DEFAULT_OPTIONS = Options()
+
+
 class HasRomanValue(Protocol):
-    def roman_value(self, strict: bool = True, /) -> int | Fraction:
+    def roman_value(self, options: Options = ..., /) -> int | Fraction:
         ...
 
 
@@ -53,7 +80,10 @@ class BasicRomanSigil(Enum):
     D = 500
     M = 1000
 
-    def roman_value(self, strict: bool = False, /) -> int:
+    def roman_value(self, _options: Options = DEFAULT_OPTIONS, /) -> int:
+        """
+        Gets the fractional or integer value this object represents
+        """
         return self.value
 
     def __str__(self) -> str:
@@ -74,7 +104,10 @@ class FractionalRomanSigil(Enum):
     SICILICUS = Fraction(1, 48)
     SEMUNCIA = Fraction(1, 24)
 
-    def roman_value(self, _strict: bool = False, /) -> Fraction:
+    def roman_value(self, _option: Options = DEFAULT_OPTIONS, /) -> Fraction:
+        """
+        Gets the fractional or integer value this object represents
+        """
         return self.value
 
     def __str__(self) -> str:
@@ -102,7 +135,10 @@ class ApostrophusRomanSigil(Enum):
     FIFTY_THOUSAND = 50000
     HUNDRED_THOUSAND = 100000
 
-    def roman_value(self, _strict: bool = False, /) -> int:
+    def roman_value(self, _options: Options = DEFAULT_OPTIONS, /) -> int:
+        """
+        Gets the fractional or integer value this object represents
+        """
         return self.value
 
     def __str__(self) -> str:
@@ -122,30 +158,34 @@ class VinculumKind(Enum):
 
 
 class Vinculum:
+    """
+    Represents a vinculum group
+    """
+
     inner: RomanSequence
     kind: VinculumKind
     multiplicity: int
-    strict: bool
 
     def __init__(
         self,
-        inner: HasRomanValue | str,
+        *args: HasRomanValue | str,
         kind: VinculumKind = VinculumKind.THOUSAND,
         multiplicity: int = 1,
-        strict: bool = False,
     ):
         assert multiplicity >= 1
-        sequence = mk_roman_sequence(inner)
+        sequence = mk_roman_sequence(*args)
         if sequence is None:
             raise ValueError("Cannot parse string as roman numeral")
         self.inner = sequence
         self.kind = kind
         self.multiplicity = multiplicity
-        self.strict = strict
 
-    def roman_value(self, strict: bool = False, /) -> int | Fraction:
-        return (
-            cast(int, self.kind.value**self.multiplicity) * self.inner.roman_value(strict)
+    def roman_value(self, options: Options = DEFAULT_OPTIONS, /) -> int | Fraction:
+        """
+        Gets the fractional or integer value this object represents
+        """
+        return cast(int, self.kind.value**self.multiplicity) * self.inner.roman_value(
+            options
         )
 
     def __str__(self) -> str:
@@ -169,6 +209,10 @@ class Vinculum:
         raise TypeError("Unreachable")
 
 
+def count(source: Iterable[object]) -> int:
+    return sum(1 for _ in source)
+
+
 @final
 class RomanSequence:
     sequence: Sequence[HasRomanValue]
@@ -179,28 +223,38 @@ class RomanSequence:
     def __add__(self, other: RomanSequence) -> RomanSequence:
         if not isinstance(other, RomanSequence):
             return NotImplemented
-        return RomanSequence(
-            [*self.sequence, *other.sequence]
-        )
+        return RomanSequence([*self.sequence, *other.sequence])
 
     def flatten(self) -> RomanSequence:
         flattened = RomanSequence([])
         for item in self.sequence:
             if isinstance(item, RomanSequence):
-                flattened += item
+                flattened += item  # .flatten()
             else:
                 flattened += RomanSequence([item])
         return flattened
 
-    def roman_value(self, strict: bool = False, /) -> int | Fraction:
-        if self.sequence == []:
-            raise ValueError("Empty numeral")
-        summands: list[int | Fraction] = [self.sequence[0].roman_value()]
-        for item in self.sequence[1:]:
-            value = item.roman_value()
+    @staticmethod
+    def _group(
+        source: Iterable[int | Fraction], do_group: bool = True
+    ) -> Iterable[int | Fraction]:
+        if not do_group:
+            return source
+        return (k * count(v) for k, v in groupby(source))
+
+    def _evaluate_with_nested_subtraction_stack(
+        self, options: Options = DEFAULT_OPTIONS
+    ) -> int | Fraction:
+        value_sequence = [
+            *self._group(
+                (item.roman_value(options) for item in self.sequence), options.grouped
+            )
+        ]
+        summands: list[int | Fraction] = [value_sequence[0]]
+        for value in value_sequence[1:]:
             if value > summands[-1]:
                 last_summand = summands.pop()
-                if strict and not (
+                if options.strict and not (
                     (last_summand == 1 and value in [5, 10])
                     or (last_summand == 10 and value in [50, 100])
                     or (last_summand == 100 and value in [500, 1000])
@@ -212,6 +266,42 @@ class RomanSequence:
                 summands.append(value)
 
         return sum(summands)
+
+    def _evaluate_with_single_value_subtraction(
+        self, options: Options = DEFAULT_OPTIONS
+    ) -> int | Fraction:
+        total: int | Fraction = 0
+        last_value: int | Fraction | None = None
+        for item in reversed(self.sequence):
+            value = item.roman_value(options)
+            if last_value is not None and last_value > value:
+                if options.strict and not (
+                    (value == 1 and last_value in [5, 10])
+                    or (value == 10 and last_value in [50, 100])
+                    or (value == 100 and last_value in [500, 1000])
+                ):
+                    raise ValueError("Malformed roman numeral (strict=True)")
+                total -= value
+                last_value = value
+            else:
+                total += value
+                last_value = value
+
+        return total
+
+    def roman_value(self, options: Options = DEFAULT_OPTIONS, /) -> int | Fraction:
+        """
+        Gets the fractional or integer value this object represents
+        """
+        if self.sequence == []:
+            raise ValueError("Empty numeral")
+
+        match options.mode:
+            case SequenceEvaluationMode.NESTED_SUBTRACTION_STACK_MODE:
+                return self._evaluate_with_nested_subtraction_stack(options)
+
+            case SequenceEvaluationMode.SINGLE_VALUE_SUBTRACTION_MODE:
+                return self._evaluate_with_single_value_subtraction(options)
 
     def __str__(self) -> str:
         return "".join(str(item) for item in self.sequence)
@@ -332,7 +422,7 @@ def parse_vinculum_thousand_group(
         sequence += result[0]
         begin = match.end()
 
-    return (Vinculum(sequence, VinculumKind.THOUSAND, count), begin)
+    return (Vinculum(sequence, kind=VinculumKind.THOUSAND, multiplicity=count), begin)
 
 
 def parse_vinculum_hundred_thousand_group(
@@ -356,12 +446,10 @@ def parse_vinculum_hundred_thousand_group(
     except IndexError:
         return None
 
-    return (Vinculum(component.inner, VinculumKind.HUNDRED_THOUSAND), begin + 1)
+    return (Vinculum(component.inner, kind=VinculumKind.HUNDRED_THOUSAND), begin + 1)
 
 
-def parse_roman_sequence(
-    source: str, begin: int
-) -> tuple[RomanSequence, int] | None:
+def parse_roman_sequence(source: str, begin: int) -> tuple[RomanSequence, int] | None:
     sequence: list[HasRomanValue] = []
     while True:
         result = parse_roman_component(source, begin, False)
@@ -435,9 +523,10 @@ def parse_roman_component(
     return None
 
 
-def mk_roman_sequence(
-    *args: HasRomanValue | str
-) -> RomanSequence:
+def mk_roman_sequence(*args: HasRomanValue | str) -> RomanSequence:
+    """
+    Create an object representing a sequence of roman symbols
+    """
     sequence: list[HasRomanValue] = []
     if len(args) == 0:
         raise ValueError("Empty input roman numeral")
@@ -455,6 +544,11 @@ def mk_roman_sequence(
     return RomanSequence(sequence).flatten()
 
 
-def get_roman_value(*args: HasRomanValue | str, strict: bool = False) -> int | Fraction:
+def get_roman_value(
+    *args: HasRomanValue | str, options: Options = DEFAULT_OPTIONS
+) -> int | Fraction:
+    """
+    Gets the fractional or integer value this roman sequence represents
+    """
     sequence = mk_roman_sequence(*args)
-    return sequence.roman_value(strict)
+    return sequence.roman_value(options)
