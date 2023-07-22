@@ -9,7 +9,7 @@ Romex supports:
 - Apostrophus (either with a reversed C or Unicode symbols)
 - Fractional numerals (either as periods or Unicode symbols)
 - Strict sequence evaluation flag that rejects numerals that don't fit modern convention
-- Three sequence evaluation modes for non-strict parsing
+- Two sequence evaluation modes for non-strict parsing
 
 ## API
 
