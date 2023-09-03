@@ -1,3 +1,5 @@
+# ⚠️ THIS CODE DOES NOT ACTUALLY FULLY 100% WORK TO THE SATISFACTION OF THE AUTHOR—USE AT YOUR OWN RISK!
+
 # Romex
 
 Romex is a roman-numeral-to-python-integer-or-fraction converter that supports many kinds of roman numerals.
